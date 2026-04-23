@@ -44,15 +44,17 @@ Key facts that drive the design:
 - [x] Refactor `deep_ep.cpp` to use adapter instead of direct `internode::` calls.
 - [x] Add capability flags in Python (`get_backend_capabilities`).
 
-## Phase 2: Build System — SYCL + iSHMEM Toolchain
-- [ ] Add CMake/setup.py path for Intel DPC++ (icpx) compiler when `DEEPEP_INTERNODE_BACKEND=ishmem`.
-- [ ] Detect `ISHMEM_DIR` environment variable and validate iSHMEM installation.
-- [ ] Link against `libishmem.so` + Level Zero runtime.
-- [ ] Detect Intel GPU via `sycl::device` and report at build time.
-- [ ] Add `SYCL_ISHMEM` compile definition (analogous to existing `DISABLE_NVSHMEM`).
-- [ ] Verify clean compile of host runtime adapter with iSHMEM headers.
+## Phase 2: Build System — SYCL + iSHMEM Toolchain ✅
+- [x] Add setup.py path for Intel DPC++ (icpx) compiler when `DEEPEP_INTERNODE_BACKEND=ishmem`.
+- [x] Detect `ISHMEM_DIR` environment variable and validate iSHMEM installation.
+- [x] Link against `libishmem` + Level Zero runtime (`-lze_loader`).
+- [x] Add `SYCL_ISHMEM` compile definition (analogous to existing `DISABLE_NVSHMEM`).
+- [x] Create SYCL backend stub (`csrc/sycl_backend/deep_ep_sycl.cpp`) with full pybind11 API surface.
+- [x] Create SYCL-compatible config/exception headers (`csrc/sycl_backend/configs.hpp`, `exception.hpp`).
+- [x] Verify clean compile: `python setup.py build` succeeds with `DEEPEP_INTERNODE_BACKEND=ishmem`.
 
-Acceptance: `python setup.py build` succeeds with `DEEPEP_INTERNODE_BACKEND=ishmem`.
+Note: Directory named `csrc/sycl_backend/` (not `csrc/sycl/`) to avoid shadowing
+system `<sycl/...>` headers when `-I csrc/` is on the include path.
 
 ## Phase 3: iSHMEM Host Runtime Integration
 - [ ] Implement iSHMEM path in `internode_runtime_adapter.hpp`:
@@ -185,10 +187,11 @@ Acceptance: Python-level API produces identical numerical results to CUDA path.
 ## Files to Create (SYCL backend)
 
 ```
-csrc/sycl/
-├── configs.hpp           # SYCL-compatible constants (from configs.cuh)
+csrc/sycl_backend/
+├── configs.hpp           # SYCL-compatible constants (from configs.cuh)        ✅
+├── exception.hpp         # Host-side assertion/error macros                    ✅
+├── deep_ep_sycl.cpp      # pybind11 module entry point (stub)                 ✅
 ├── utils.hpp             # SYCL sub-group / atomic / barrier utilities
-├── exception.hpp         # Device-side assertion macros
 ├── buffer.hpp            # Symmetric buffer helpers for iSHMEM heap
 ├── ibgda_device.hpp      # iSHMEM IBGDA device-side API wrapper
 ├── launch.hpp            # SYCL kernel launch helpers

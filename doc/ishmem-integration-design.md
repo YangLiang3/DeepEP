@@ -33,7 +33,7 @@ delivers equivalent DeepEP functionality on Intel GPUs.
 ## 3. Design Principles
 
 1. **Separate kernel implementations**: CUDA kernels stay in `csrc/kernels/`, SYCL kernels
-   go in `csrc/sycl/`. No cross-contamination.
+   go in `csrc/sycl_backend/`. No cross-contamination.
 2. **Shared host orchestration**: `deep_ep.cpp` dispatches to the correct backend's kernel
    launcher based on compile-time `#ifdef DEEPEP_USE_SYCL`.
 3. **Same Python API**: `deep_ep/buffer.py` public interface is unchanged. Backend selection
@@ -87,7 +87,7 @@ csrc/
 | Backend        | Compiler | Source files compiled        | Key defines              |
 |----------------|----------|-----------------------------|--------------------------|
 | `cuda_nvshmem` | nvcc     | `csrc/kernels/*.cu`         | (default)                |
-| `sycl_ishmem`  | icpx     | `csrc/sycl/*.cpp`           | `DEEPEP_USE_SYCL`, `DISABLE_NVSHMEM` |
+| `sycl_ishmem`  | icpx     | `csrc/sycl_backend/*.cpp`   | `SYCL_ISHMEM`, `DISABLE_NVSHMEM`     |
 | `none`         | g++      | `csrc/deep_ep.cpp` only     | `DISABLE_NVSHMEM`        |
 
 ## 5. CUDA → SYCL Kernel Porting Guide
