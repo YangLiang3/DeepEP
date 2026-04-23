@@ -56,21 +56,26 @@ Key facts that drive the design:
 Note: Directory named `csrc/sycl_backend/` (not `csrc/sycl/`) to avoid shadowing
 system `<sycl/...>` headers when `-I csrc/` is on the include path.
 
-## Phase 3: iSHMEM Host Runtime Integration
-- [ ] Implement iSHMEM path in `internode_runtime_adapter.hpp`:
-  - `ishmem_init()` / `ishmemx_init_attr()` for initialization.
-  - `ishmem_align()` / `ishmem_malloc()` for symmetric heap allocation.
-  - `ishmem_free()` for deallocation.
-  - `ishmem_barrier_all()` for global barrier.
-  - `ishmem_finalize()` for teardown.
-  - `ishmem_team_split_strided()` for RDMA sub-team creation.
-- [ ] Implement SYCL `sycl::queue` management and device selection in `deep_ep.cpp`.
-- [ ] Map NVLink-style IPC buffer sharing to Intel GPU equivalent
-      (Level Zero IPC handles: `zeMemGetIpcHandle` / `zeMemOpenIpcHandle`).
-- [ ] Add shared memory allocator for Intel GPU (replace `cudaIpcMemHandle_t` /
-      `CUmemFabricHandle` with L0 IPC or USM allocations).
-
-Acceptance: `Buffer.__init__` and `Buffer.sync` complete without error on Intel GPU.
+## Phase 3: iSHMEM Host Runtime Integration ✅
+- [x] Implement `sycl_context.hpp` — SYCL device/queue management singleton
+  - Lazy singleton per device ordinal; enumerates Intel GPUs.
+  - In-order queues (default + comm); exposes L0 native handles.
+  - `DEEPEP_DEVICE_ORDINAL` env var for device selection.
+- [x] Implement `l0_ipc_memory.hpp` — Level Zero IPC memory allocator
+  - `L0IpcMemHandle` struct (ze_ipc_mem_handle_t + size).
+  - `L0MemoryAllocator` — malloc_device / free / IPC get/open/close.
+  - `L0HostAllocator` — host-pinned USM allocations.
+- [x] Implement `ishmem_runtime.hpp` — iSHMEM host runtime wrapper
+  - `init()` / `init_attr()` / `finalize()` for lifecycle.
+  - `alloc()` / `malloc()` / `free()` for symmetric heap.
+  - `barrier_all()` / `sync_all()` for synchronization.
+  - `ptr()` for peer pointer resolution.
+  - `team_split_strided()` for sub-team creation.
+- [x] Wire real Buffer implementation in `deep_ep_sycl.cpp`:
+  - Constructor: allocate NVL buffers via L0 IPC, workspace, host-pinned counters.
+  - `sync()`: open remote IPC handles, init iSHMEM, alloc RDMA buffer from symmetric heap.
+  - `destroy()`: barrier, close IPC, free iSHMEM/L0 resources, finalize.
+- [x] Verify clean compile with `DEEPEP_INTERNODE_BACKEND=ishmem`.
 
 ## Phase 4: SYCL Kernel Infrastructure
 - [ ] Create `csrc/sycl/` directory for SYCL kernel files.
