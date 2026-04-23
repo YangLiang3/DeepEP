@@ -77,21 +77,31 @@ system `<sycl/...>` headers when `-I csrc/` is on the include path.
   - `destroy()`: barrier, close IPC, free iSHMEM/L0 resources, finalize.
 - [x] Verify clean compile with `DEEPEP_INTERNODE_BACKEND=ishmem`.
 
-## Phase 4: SYCL Kernel Infrastructure
-- [ ] Create `csrc/sycl/` directory for SYCL kernel files.
-- [ ] Port common utilities from `utils.cuh` to SYCL equivalents:
-  - Warp-level → sub-group level intrinsics mapping.
-  - `__shared__` → `sycl::local_accessor` local memory.
-  - `__syncthreads()` → `sycl::group_barrier()`.
-  - `atomicCAS/atomicAdd` → `sycl::atomic_ref`.
-  - `clock64()` for timeout → `sycl::ext::intel::experimental::read_cycle_counter()` or equivalent.
-  - `ld_volatile_global/st_na_global` → SYCL atomic fences + memory order.
-- [ ] Port `configs.cuh` constants to SYCL-compatible header (`sycl/configs.hpp`).
-- [ ] Port `exception.cuh` assertion macros to SYCL device assertions.
-- [ ] Port `buffer.cuh` symmetric buffer helpers to SYCL.
-- [ ] Create SYCL launch config utilities (nd_range, sub_group_size selection).
-
-Acceptance: SYCL utility headers compile with `icpx -fsycl`.
+## Phase 4: SYCL Kernel Infrastructure ✅
+- [x] Create `csrc/sycl_backend/sycl_utils.hpp` — SYCL port of `kernels/utils.cuh`:
+  - Memory fences: `memory_fence()` / `memory_fence_device()` / `memory_fence_work_group()` via `sycl::atomic_fence`.
+  - Volatile/relaxed loads/stores: `ld_volatile_global` / `st_relaxed_sys_global` / `ld_acquire_sys_global` etc. via `sycl::atomic_ref`.
+  - Atomic operations: `atomic_add_system` / `atomic_sub_system` / CAS / exchange with correct scopes.
+  - Lock primitives: `acquire_lock` / `release_lock` using work-group-scope CAS.
+  - Sub-group reductions: `sub_group_reduce_sum/max/min/and/or` via `sycl::shift_group_left`.
+  - Sub-group utilities: `get_lane_id` / `elect_one_sync` / `broadcast`.
+  - Vector types: `sycl_int4` / `sycl_int2` / `VecInt<>` trait.
+  - Copy macro: `UNROLLED_SUBGROUP_COPY` (replaces `UNROLLED_WARP_COPY`).
+  - Barrier: `barrier_block<kNumRanks>` using system-scope atomics + `sycl::group_barrier`.
+  - Arithmetic: `ceil_div` / `align_up` / `align_down` / `get_channel_task_range`.
+  - FP8 helpers: `fast_pow2` / `fast_log2_ceil` / `calculate_fp8_scales`.
+  - Key design: `sycl::atomic_ref` default order must be `relaxed`/`acq_rel`/`seq_cst`; actual acquire/release specified at call sites.
+- [x] Create `csrc/sycl_backend/sycl_buffer.hpp` — SYCL port of `kernels/buffer.cuh`:
+  - `DeviceBuffer<T>` — linear buffer carved from global pointer.
+  - `DeviceAsymBuffer<T, kNumRanks>` — per-rank asymmetric buffer.
+  - `DeviceSymBuffer<T, kDecoupled>` — symmetric send/recv buffer pair.
+  - Named `Device*` to avoid conflict with host-side `Buffer` class.
+- [x] Create `csrc/sycl_backend/sycl_launch.hpp` — SYCL port of `kernels/launch.cuh`:
+  - `SyclLaunchConfig` struct (num_work_groups, work_group_size, local_mem_bytes).
+  - `SETUP_SYCL_LAUNCH_CONFIG` / `LAUNCH_SYCL_KERNEL` / `LAUNCH_SYCL_KERNEL_WITH_LOCAL_MEM` macros.
+  - Dispatch macros: `SWITCH_RANKS` / `SWITCH_RDMA_RANKS` / `SWITCH_TYPES` / `SWITCH_HIDDEN` (uses `NUM_MAX_P2P_PEERS`).
+- [x] Add `EP_DEVICE_ASSERT` macro to `exception.hpp` using `assert()` for SYCL kernels.
+- [x] Verify clean compile with `icpx -fsycl`: all headers included in `deep_ep_sycl.cpp`.
 
 ## Phase 5: SYCL iSHMEM IBGDA Device-Side Abstraction
 - [ ] Create `csrc/sycl/ibgda_device.hpp` — SYCL IBGDA device API wrapper:

@@ -5,6 +5,7 @@
 
 #include <exception>
 #include <string>
+#include <cassert>
 
 #ifndef EP_STATIC_ASSERT
 #define EP_STATIC_ASSERT(cond, reason) static_assert(cond, reason)
@@ -40,4 +41,10 @@ public:
             throw EPException("ZE", __FILE__, __LINE__, "ze error " + std::to_string(_ze_res));      \
         }                                                                                            \
     } while (0)
+#endif
+
+// Device-side assertion for SYCL kernels.
+// SYCL has no asm("trap;"); we use assert() which is supported by Intel DPC++.
+#ifndef EP_DEVICE_ASSERT
+#define EP_DEVICE_ASSERT(cond) assert(cond)
 #endif

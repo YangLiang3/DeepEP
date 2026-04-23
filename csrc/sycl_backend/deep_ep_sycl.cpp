@@ -25,6 +25,9 @@
 #include "sycl_backend/sycl_context.hpp"
 #include "sycl_backend/l0_ipc_memory.hpp"
 #include "sycl_backend/ishmem_runtime.hpp"
+#include "sycl_backend/sycl_utils.hpp"
+#include "sycl_backend/sycl_buffer.hpp"
+#include "sycl_backend/sycl_launch.hpp"
 
 namespace py = pybind11;
 
