@@ -28,6 +28,7 @@
 #include "sycl_backend/sycl_utils.hpp"
 #include "sycl_backend/sycl_buffer.hpp"
 #include "sycl_backend/sycl_launch.hpp"
+#include "sycl_backend/ibgda_device.hpp"
 
 namespace py = pybind11;
 

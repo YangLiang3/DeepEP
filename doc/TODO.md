@@ -103,30 +103,93 @@ system `<sycl/...>` headers when `-I csrc/` is on the include path.
 - [x] Add `EP_DEVICE_ASSERT` macro to `exception.hpp` using `assert()` for SYCL kernels.
 - [x] Verify clean compile with `icpx -fsycl`: all headers included in `deep_ep_sycl.cpp`.
 
-## Phase 5: SYCL iSHMEM IBGDA Device-Side Abstraction
-- [ ] Create `csrc/sycl/ibgda_device.hpp` — SYCL IBGDA device API wrapper:
-  - `ibgda_put_nbi_subgroup()` — maps to `ishmemi_ibgda_device_emit_direct_wqe_skeleton(PUT)`.
-  - `ibgda_quiet()` — maps to CQ polling via `ishmemi_ibgda_uc_load16` or iSHMEM quiet.
-  - `ibgda_amo_nonfetch_add()` — maps to iSHMEM atomic fetch-add via `ishmemi_ibgda_device_emit_direct_wqe_skeleton` with atomic opcode.
-  - `get_p2p_ptr()` — maps to `ishmem_ptr()` for intra-node peer pointer resolution.
-  - `barrier_all_block()` — maps to `ishmem_barrier_all()` within work-group scope.
-  - `sync_all()` / `sync_team()` — maps to `ishmem_team_sync()` or `ishmem_sync_all()`.
+## Phase 5: SYCL iSHMEM IBGDA Device-Side Abstraction ✅
+- [x] Create `csrc/sycl_backend/ibgda_device.hpp` — SYCL IBGDA device API wrapper:
+  - `ibgda_put_nbi_subgroup()` — maps to `ishmem_put_nbi()` (public API, internally dispatches to
+    `ishmemi_ibgda_device_post_put_nbi()` → `ishmemi_ibgda_device_emit_direct_wqe_skeleton(PUT)`
+    or staged WQE fallback). Sub-group cooperative put handled via leader-only call.
+  - `ibgda_quiet()` — maps to `ishmem_quiet()` (public API, internally calls
+    `ishmemi_ibgda_device_quiet()` which polls all PEs' collapsed CQs, then proxy quiet).
+    Per-PE quiet (`nvshmemi_ibgda_quiet(pe, qp)`) has no direct iSHMEM equivalent;
+    `ishmem_quiet()` waits for ALL outstanding operations across ALL PEs.
+  - `ibgda_amo_nonfetch_add()` — maps to `ishmem_int_atomic_add(dest, val, pe)` (public API,
+    internally dispatches to `ishmemi_ibgda_device_amo_nonfetch<int, AMO_ADD>()` →
+    `ishmemi_ibgda_device_rdma_atomic64()` with `MLX5_OPCODE_ATOMIC_FA` for 64-bit types,
+    or CAS loop on 8-byte aligned container for 32-bit `int`). For local-copy case,
+    use `sycl::atomic_ref::fetch_add()` directly.
+  - `ibgda_rma_p()` — maps to `ishmem_int_p(dest, val, pe)` (public API, internally dispatches
+    to `ishmemi_ibgda_device_post_put()` which does blocking RDMA WRITE + CQ poll for
+    completion, or staged WQE fallback). This is a single-element blocking put.
+  - `get_p2p_ptr()` — maps to `ishmem_ptr(dest, pe)` for intra-node peer pointer resolution.
+    Returns non-NULL for node-local PEs (L0 IPC mapped), NULL for remote PEs.
+  - `barrier_all_block()` — maps to `ishmemx_barrier_all_work_group(group)` (work-group scope).
+  - `sync_all()` — maps to `ishmem_sync_all()` (device-callable).
+  - `sync_team()` — maps to `ishmem_team_sync(team)` (device-callable).
+  - `quiet_work_group()` — maps to `ishmemx_quiet_work_group(group)` (work-group scope;
+    leader calls `ishmemi_ibgda_device_quiet()`, falls back to proxy if needed).
+  - `fence_work_group()` — maps to `ishmemx_fence_work_group(group)` (work-group scope).
 
-NVSHMEM → iSHMEM IBGDA device API mapping table:
+### NVSHMEM → iSHMEM Device API Mapping Table
 
-| NVSHMEM (CUDA)                        | iSHMEM (SYCL)                                        |
-|---------------------------------------|------------------------------------------------------|
-| `nvshmemi_ibgda_put_nbi_warp`         | `ishmemi_ibgda_device_emit_direct_wqe_skeleton(PUT)` |
-| `nvshmemi_ibgda_quiet`                | CQ poll via `ishmemi_ibgda_uc_load16` + fence        |
-| `nvshmemi_ibgda_amo_nonfetch_add`     | Direct WQE with `MLX5_OPCODE_ATOMIC_FA`              |
-| `nvshmemi_ibgda_rma_p`               | `ishmemi_ibgda_device_emit_staged_wqe(PUT)`          |
-| `nvshmemi_get_p2p_ptr`               | `ishmem_ptr()`                                        |
-| `nvshmem_sync_all`                    | `ishmem_sync_all()`                                   |
-| `nvshmem_sync(team)`                  | `ishmem_team_sync(team)`                              |
-| `nvshmemx_barrier_all_block`          | `ishmem_barrier_all()` (work-group scope)             |
-| `nvshmem_team_split_strided`          | `ishmem_team_split_strided()`                         |
+Key design difference: NVSHMEM IBGDA in DeepEP uses **internal** symbols
+(`nvshmemi_ibgda_*`) that directly construct mlx5 WQEs and manage QP state.
+iSHMEM exposes **public** APIs (`ishmem_*` / `ishmemx_*`) that internally
+dispatch to IBGDA direct doorbell path when available, with automatic fallback
+to proxy/staged WQE path. The wrapper should use iSHMEM public APIs rather
+than calling internal `ishmemi_ibgda_*` functions directly.
+
+#### RMA Operations
+
+| NVSHMEM (CUDA) | iSHMEM (SYCL) | Notes |
+|---|---|---|
+| `nvshmemi_ibgda_put_nbi_warp(rptr, lptr, bytes, pe, qp_id, lane_id, msg_idx)` | `ishmem_put_nbi(dest, src, nelems, pe)` | NVSHMEM: warp-cooperative, multi-chunk lkey/rkey management, per-lane WQE construction. iSHMEM: single-thread call, internally handles WQE emission. Sub-group cooperation must be done at wrapper level (leader-only call + barrier). |
+| `nvshmemi_ibgda_rma_p(rptr, value, pe, qp_id, imm)` | `ishmem_int_p(dest, value, pe)` | NVSHMEM: inline RDMA WRITE with optional IMM data, fire-and-forget. iSHMEM: blocking scalar put (CQ-polled completion). No IMM data support. |
+| (N/A — NVSHMEM uses explicit lkey/rkey via `ibgda_get_lkey_and_rkey`) | (handled internally by iSHMEM `emit_direct_wqe_skeleton` via `peer_ctx->lkey_be/rkey_be`) | iSHMEM uses pre-provisioned per-peer lkey/rkey; no per-operation key lookup needed. |
+
+#### Atomic Operations
+
+| NVSHMEM (CUDA) | iSHMEM (SYCL) | Notes |
+|---|---|---|
+| `nvshmemi_ibgda_amo_nonfetch_add(rptr, value, pe, qp_id, is_local_copy)` | `ishmem_int_atomic_add(dest, value, pe)` or `ishmem_atomic_add<T>(dest, value, pe)` | NVSHMEM: uses `MLX5_OPCODE_ATOMIC_MASKED_FA` (32-bit extended AMO) + explicit ibuf management. iSHMEM: uses `ishmemi_ibgda_device_amo_nonfetch<T, AMO_ADD>` → 64-bit `MLX5_OPCODE_ATOMIC_FA` with CAS-loop for 32-bit types. For `is_local_copy==true`, both use local atomicAdd. |
+
+#### Completion / Ordering
+
+| NVSHMEM (CUDA) | iSHMEM (SYCL) | Notes |
+|---|---|---|
+| `nvshmemi_ibgda_quiet(pe, qp_id)` | `ishmem_quiet()` | **Critical difference**: NVSHMEM quiet is per-PE per-QP (polls single CQ). iSHMEM quiet is **global** (polls ALL PEs' CQs). Wrapper may need to use `ishmem_quiet()` at synchronization points where original code quiets all PEs in a loop anyway. |
+| (N/A) | `ishmemx_quiet_work_group(group)` | Work-group cooperative quiet: leader polls CQs, all threads barrier after. Use this in work-group-scoped kernels. |
+| (N/A) | `ishmem_fence()` / `ishmemx_fence_work_group(group)` | Ordering without completion guarantee. Useful between puts to same PE. |
+
+#### Synchronization
+
+| NVSHMEM (CUDA) | iSHMEM (SYCL) | Notes |
+|---|---|---|
+| `nvshmem_sync_all()` | `ishmem_sync_all()` | 1:1 mapping. Device-callable. |
+| `nvshmem_sync(team)` | `ishmem_team_sync(team)` | 1:1 mapping. Device-callable. |
+| `nvshmemx_barrier_all_block()` | `ishmemx_barrier_all_work_group(group)` | NVSHMEM: implicit block scope. iSHMEM: requires explicit `group` parameter (SYCL work-group or sub-group). |
+| `nvshmem_team_split_strided(...)` | `ishmem_team_split_strided(...)` | 1:1 mapping. Host-only. |
+
+#### Peer Memory Access
+
+| NVSHMEM (CUDA) | iSHMEM (SYCL) | Notes |
+|---|---|---|
+| `nvshmemi_get_p2p_ptr(ptr, rank, dst_rank)` | `ishmem_ptr(dest, pe)` | NVSHMEM: returns mapped NVLink P2P address or 0 if RDMA-only. iSHMEM: returns non-NULL for node-local PEs with IPC mapping, NULL otherwise. Caller uses returned pointer for direct load/store (intra-node) or falls back to RDMA put (inter-node). |
+
+#### Internal Infrastructure (NOT directly mapped — handled by iSHMEM internally)
+
+| NVSHMEM Internal | iSHMEM Internal Equivalent | Notes |
+|---|---|---|
+| `ibgda_get_state()` → `nvshmemi_ibgda_device_state_d` | `ishmemi_ibgda_device_get_context()` → `ishmemi_ibgda_device_context_t*` | Device-side global state. NVSHMEM: flat struct in `__device__` memory. iSHMEM: pointer via `global_info->ibgda_device_ctx`. |
+| `ibgda_get_rc(pe, qp_id)` → `nvshmemi_ibgda_device_qp_t*` | `ishmemi_ibgda_device_peer_context_qp(ctx, pe, qp_idx)` → `ishmemi_ibgda_peer_context_t*` | Per-PE QP handle. NVSHMEM: flat RC array indexed by PE × num_rc. iSHMEM: `peers[]` array indexed by PE × num_qps_per_pe. |
+| `ibgda_reserve_wqe_slots(qp, n)` | Atomic `fetch_add` on `peer_ctx->nic_wq_cnt_addr` | SQ slot reservation. Both use atomic increment. |
+| `ibgda_get_wqe_ptr(qp, idx)` | `peer_ctx->nic_wq_base_addr + (slot << 6)` | WQE buffer address calculation. |
+| `ibgda_write_rdma_write_wqe(...)` | Inline in `ishmemi_ibgda_device_emit_direct_wqe_skeleton()` | WQE construction. NVSHMEM: separate function. iSHMEM: monolithic inline function. |
+| `ibgda_submit_requests()` → dbr + doorbell | `ishmemi_ibgda_device_ring_doorbell()` | Doorbell ringing. NVSHMEM: lock + dbr update + BAR0 write. iSHMEM: dbr write + UAR MMIO write, optional batching via `db_batch_size`. |
+| `ibgda_poll_cq(cq, idx)` | `ishmemi_ibgda_device_quiet()` polls via `ishmemi_ibgda_uc_load16()` | CQ polling. NVSHMEM: per-QP CQ poll. iSHMEM: per-PE collapsed CQ poll with UC load (bypasses GPU cache). |
+| `HtoBE64/32/16()` (PTX `prmt` instruction) | `ishmemi_ibgda_htobe64/32()` (pure C++ bit manipulation) | Byte swap. NVSHMEM: PTX intrinsics. iSHMEM: portable C++. |
 
 Acceptance: IBGDA wrapper compiles and iSHMEM device context is accessible from SYCL kernel.
+Wrapper uses iSHMEM public APIs where possible; internal APIs documented for reference only.
 
 ## Phase 6: Internode High-Throughput Kernels (SYCL)
 Port `csrc/kernels/internode.cu` (2377 lines) to `csrc/sycl/internode.cpp`:
