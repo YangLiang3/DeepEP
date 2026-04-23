@@ -16,21 +16,31 @@ def get_nvshmem_host_lib_name(base_dir):
 
 
 if __name__ == '__main__':
+    internode_backend = os.getenv('DEEPEP_INTERNODE_BACKEND', 'nvshmem').strip().lower()
+    assert internode_backend in ('nvshmem', 'ishmem', 'none'), \
+        f'Unsupported DEEPEP_INTERNODE_BACKEND: {internode_backend}'
+
     disable_nvshmem = False
     nvshmem_dir = os.getenv('NVSHMEM_DIR', None)
     nvshmem_host_lib = 'libnvshmem_host.so'
-    if nvshmem_dir is None:
-        try:
-            nvshmem_dir = importlib.util.find_spec("nvidia.nvshmem").submodule_search_locations[0]
-            nvshmem_host_lib = get_nvshmem_host_lib_name(nvshmem_dir)
-            import nvidia.nvshmem as nvshmem  # noqa: F401
-        except (ModuleNotFoundError, AttributeError, IndexError):
-            print(
-                'Warning: `NVSHMEM_DIR` is not specified, and the NVSHMEM module is not installed. All internode and low-latency features are disabled\n'
-            )
-            disable_nvshmem = True
+    if internode_backend == 'nvshmem':
+        if nvshmem_dir is None:
+            try:
+                nvshmem_dir = importlib.util.find_spec("nvidia.nvshmem").submodule_search_locations[0]
+                nvshmem_host_lib = get_nvshmem_host_lib_name(nvshmem_dir)
+                import nvidia.nvshmem as nvshmem  # noqa: F401
+            except (ModuleNotFoundError, AttributeError, IndexError):
+                print(
+                    'Warning: `NVSHMEM_DIR` is not specified, and the NVSHMEM module is not installed. All internode and low-latency features are disabled\n'
+                )
+                disable_nvshmem = True
+    elif internode_backend == 'ishmem':
+        print('Info: DEEPEP_INTERNODE_BACKEND=ishmem selected. CUDA internode kernels still require NVSHMEM; '
+              'building intranode-only mode for now.\n')
+        disable_nvshmem = True
     else:
-        disable_nvshmem = False
+        print('Info: DEEPEP_INTERNODE_BACKEND=none selected, building intranode-only mode.\n')
+        disable_nvshmem = True
 
     if not disable_nvshmem:
         assert os.path.exists(nvshmem_dir), f'The specified NVSHMEM directory does not exist: {nvshmem_dir}'
@@ -47,6 +57,9 @@ if __name__ == '__main__':
     if disable_nvshmem:
         cxx_flags.append('-DDISABLE_NVSHMEM')
         nvcc_flags.append('-DDISABLE_NVSHMEM')
+        if internode_backend == 'ishmem':
+            cxx_flags.append('-DDEEPEP_ISHMEM_STUB')
+            nvcc_flags.append('-DDEEPEP_ISHMEM_STUB')
     else:
         sources.extend(['csrc/kernels/internode.cu', 'csrc/kernels/internode_ll.cu'])
         include_dirs.extend([f'{nvshmem_dir}/include'])
@@ -103,6 +116,7 @@ if __name__ == '__main__':
     print(f' > Compilation flags: {extra_compile_args}')
     print(f' > Link flags: {extra_link_args}')
     print(f' > Arch list: {os.environ["TORCH_CUDA_ARCH_LIST"]}')
+    print(f' > Internode backend: {internode_backend}')
     print(f' > NVSHMEM path: {nvshmem_dir}')
     print()
 

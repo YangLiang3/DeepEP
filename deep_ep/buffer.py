@@ -89,6 +89,9 @@ class Buffer:
         self.low_latency_mode = low_latency_mode
         self.explicitly_destroy = explicitly_destroy
         self.enable_shrink = enable_shrink
+        self.internode_backend = os.getenv('DEEPEP_INTERNODE_BACKEND', 'nvshmem').strip().lower()
+        assert self.internode_backend in ('nvshmem', 'ishmem', 'none'), \
+            f'Unsupported DEEPEP_INTERNODE_BACKEND: {self.internode_backend}'
         self.runtime = deep_ep_cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode, explicitly_destroy,
                                           enable_shrink, use_fabric)
 
@@ -100,9 +103,18 @@ class Buffer:
         local_ipc_handle = self.runtime.get_local_ipc_handle()
         ipc_handles = all_gather_object(local_ipc_handle)
 
-        # Synchronize NVSHMEM unique IDs
+        # Synchronize internode unique IDs
         root_unique_id = None
         if self.runtime.get_num_rdma_ranks() > 1 or low_latency_mode:
+            if self.internode_backend == 'none':
+                raise RuntimeError('Internode/low-latency mode requires an internode backend, but DEEPEP_INTERNODE_BACKEND=none')
+            if self.internode_backend == 'ishmem':
+                raise NotImplementedError(
+                    'DEEPEP_INTERNODE_BACKEND=ishmem is a build/runtime integration entry only for now. '
+                    'DeepEP CUDA internode kernels still require NVSHMEM device-side IBGDA symbols. '
+                    'Use DEEPEP_INTERNODE_BACKEND=nvshmem for internode/low-latency mode, or set num_rdma_bytes=0.'
+                )
+
             # Enable IBGDA
             assert num_qps_per_rank > 0
             os.environ['NVSHMEM_DISABLE_P2P'] = '0' if allow_nvlink_for_low_latency_mode else '1'
@@ -127,7 +139,10 @@ class Buffer:
 
             # Synchronize using the root ID
             if (low_latency_mode and self.rank == 0) or (not low_latency_mode and self.runtime.get_rdma_rank() == 0):
-                root_unique_id = self.runtime.get_local_nvshmem_unique_id()
+                get_unique_id_fn = getattr(self.runtime, 'get_local_internode_unique_id', None)
+                if get_unique_id_fn is None:
+                    get_unique_id_fn = self.runtime.get_local_nvshmem_unique_id
+                root_unique_id = get_unique_id_fn()
             nvshmem_unique_ids = all_gather_object(root_unique_id)
             root_unique_id = nvshmem_unique_ids[0 if low_latency_mode else self.runtime.get_root_rdma_rank(True)]
 

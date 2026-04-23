@@ -80,6 +80,10 @@ NVSHMEM_DIR=/path/to/installed/nvshmem python setup.py install
 #### Installation environment variables
 
 - `NVSHMEM_DIR`: the path to the NVSHMEM directory, disable all internode and low-latency features if not specified
+- `DEEPEP_INTERNODE_BACKEND`: internode backend selector, choices are `nvshmem` (default), `ishmem`, and `none`
+    - `nvshmem`: enable current internode and low-latency CUDA kernels
+    - `ishmem`: enable first-phase integration entry (build/runtime selection), currently builds intranode-only mode because CUDA internode kernels still depend on NVSHMEM device-side IBGDA symbols
+    - `none`: force intranode-only build
 - `DISABLE_SM90_FEATURES`: 0 or 1, whether to disable SM90 features, it is required for SM90 devices or CUDA 11
 - `TORCH_CUDA_ARCH_LIST`: the list of target architectures, e.g. `TORCH_CUDA_ARCH_LIST="9.0"`
 - `DISABLE_AGGRESSIVE_PTX_INSTRS`: 0 or 1, whether to disable aggressive load/store instructions, see [Undefined-behavior PTX usage](#undefined-behavior-ptx-usage) for more details

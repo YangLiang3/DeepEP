@@ -138,6 +138,8 @@ public:
 
     pybind11::bytearray get_local_ipc_handle() const;
 
+    pybind11::bytearray get_local_internode_unique_id() const;
+
     pybind11::bytearray get_local_nvshmem_unique_id() const;
 
     torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer) const;

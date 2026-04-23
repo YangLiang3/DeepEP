@@ -254,7 +254,7 @@ pybind11::bytearray Buffer::get_local_ipc_handle() const {
     return {reinterpret_cast<const char*>(&handle), sizeof(handle)};
 }
 
-pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
+pybind11::bytearray Buffer::get_local_internode_unique_id() const {
 #ifndef DISABLE_NVSHMEM
     EP_HOST_ASSERT(rdma_rank == 0 and "Only RDMA rank 0 can get NVSHMEM unique ID");
     auto unique_id = internode::get_unique_id();
@@ -262,6 +262,10 @@ pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
 #else
     EP_HOST_ASSERT(false and "NVSHMEM is disabled during compilation");
 #endif
+}
+
+pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
+    return get_local_internode_unique_id();
 }
 
 torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer) const {
@@ -1869,6 +1873,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("get_root_rdma_rank", &deep_ep::Buffer::get_root_rdma_rank)
         .def("get_local_device_id", &deep_ep::Buffer::get_local_device_id)
         .def("get_local_ipc_handle", &deep_ep::Buffer::get_local_ipc_handle)
+        .def("get_local_internode_unique_id", &deep_ep::Buffer::get_local_internode_unique_id)
         .def("get_local_nvshmem_unique_id", &deep_ep::Buffer::get_local_nvshmem_unique_id)
         .def("get_local_buffer_tensor", &deep_ep::Buffer::get_local_buffer_tensor)
         .def("get_comm_stream", &deep_ep::Buffer::get_comm_stream)
