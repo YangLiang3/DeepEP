@@ -9,6 +9,7 @@
 #include <chrono>
 #include <memory>
 
+#include "internode_runtime_adapter.hpp"
 #include "kernels/api.cuh"
 #include "kernels/configs.cuh"
 
@@ -257,7 +258,7 @@ pybind11::bytearray Buffer::get_local_ipc_handle() const {
 pybind11::bytearray Buffer::get_local_internode_unique_id() const {
 #ifndef DISABLE_NVSHMEM
     EP_HOST_ASSERT(rdma_rank == 0 and "Only RDMA rank 0 can get NVSHMEM unique ID");
-    auto unique_id = internode::get_unique_id();
+    auto unique_id = internode_runtime::get_unique_id();
     return {reinterpret_cast<const char*>(unique_id.data()), unique_id.size()};
 #else
     EP_HOST_ASSERT(false and "NVSHMEM is disabled during compilation");
@@ -306,13 +307,13 @@ void Buffer::destroy() {
 #ifndef DISABLE_NVSHMEM
     if (is_available() and num_rdma_bytes > 0) {
         CUDA_CHECK(cudaDeviceSynchronize());
-        internode::barrier();
-        internode::free(rdma_buffer_ptr);
+        internode_runtime::barrier();
+        internode_runtime::free(rdma_buffer_ptr);
         if (enable_shrink) {
-            internode::free(mask_buffer_ptr);
-            internode::free(sync_buffer_ptr);
+            internode_runtime::free(mask_buffer_ptr);
+            internode_runtime::free(sync_buffer_ptr);
         }
-        internode::finalize();
+        internode_runtime::finalize();
     }
 #endif
 
@@ -365,11 +366,11 @@ void Buffer::sync(const std::vector<int>& device_ids,
         std::memcpy(root_unique_id.data(), root_unique_id_str.c_str(), root_unique_id_opt->size());
         auto nvshmem_rank = low_latency_mode ? rank : rdma_rank;
         auto num_nvshmem_ranks = low_latency_mode ? num_ranks : num_rdma_ranks;
-        EP_HOST_ASSERT(nvshmem_rank == internode::init(root_unique_id, nvshmem_rank, num_nvshmem_ranks, low_latency_mode));
-        internode::barrier();
+        EP_HOST_ASSERT(nvshmem_rank == internode_runtime::init(root_unique_id, nvshmem_rank, num_nvshmem_ranks, low_latency_mode));
+        internode_runtime::barrier();
 
         // Allocate
-        rdma_buffer_ptr = internode::alloc(num_rdma_bytes, NUM_BUFFER_ALIGNMENT_BYTES);
+        rdma_buffer_ptr = internode_runtime::alloc(num_rdma_bytes, NUM_BUFFER_ALIGNMENT_BYTES);
 
         // Clean buffer (mainly for low-latency mode)
         CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
@@ -378,14 +379,14 @@ void Buffer::sync(const std::vector<int>& device_ids,
         if (enable_shrink) {
             int num_mask_buffer_bytes = num_ranks * sizeof(int);
             int num_sync_buffer_bytes = num_ranks * sizeof(int);
-            mask_buffer_ptr = reinterpret_cast<int*>(internode::alloc(num_mask_buffer_bytes, NUM_BUFFER_ALIGNMENT_BYTES));
-            sync_buffer_ptr = reinterpret_cast<int*>(internode::alloc(num_sync_buffer_bytes, NUM_BUFFER_ALIGNMENT_BYTES));
+            mask_buffer_ptr = reinterpret_cast<int*>(internode_runtime::alloc(num_mask_buffer_bytes, NUM_BUFFER_ALIGNMENT_BYTES));
+            sync_buffer_ptr = reinterpret_cast<int*>(internode_runtime::alloc(num_sync_buffer_bytes, NUM_BUFFER_ALIGNMENT_BYTES));
             CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0, num_mask_buffer_bytes));
             CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
         }
 
         // Barrier
-        internode::barrier();
+        internode_runtime::barrier();
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 #endif

@@ -15,9 +15,15 @@ Status:
 - Baseline references: `doc/phase0-baseline.md`, `doc/ishmem-integration-design.md`.
 
 ## Phase 1: Backend Abstraction
-- [ ] Introduce backend-neutral internode runtime API (init, alloc, barrier, finalize, rank info).
-- [ ] Isolate CUDA-specific internode calls behind adapter interfaces.
-- [ ] Add capability flags in Python runtime (`supports_low_latency`, `supports_fp8_path`, etc.).
+- [x] Introduce backend-neutral internode runtime API (init, alloc, barrier, finalize, rank info).
+- [x] Isolate CUDA-specific internode calls behind adapter interfaces.
+- [x] Add capability flags in Python runtime (`supports_low_latency`, `supports_fp8_path`, etc.).
+
+Status:
+- Completed on 2026-04-23.
+- Runtime adapter: `csrc/internode_runtime_adapter.hpp`.
+- Runtime isolation callsites: `csrc/deep_ep.cpp`.
+- Capability flags: `deep_ep/buffer.py` (`get_backend_capabilities`).
 
 ## Phase 2: Build and Packaging
 - [ ] Add SYCL build options and dependency checks for iSHMEM.

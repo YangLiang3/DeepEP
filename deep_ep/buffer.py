@@ -92,6 +92,12 @@ class Buffer:
         self.internode_backend = os.getenv('DEEPEP_INTERNODE_BACKEND', 'nvshmem').strip().lower()
         assert self.internode_backend in ('nvshmem', 'ishmem', 'none'), \
             f'Unsupported DEEPEP_INTERNODE_BACKEND: {self.internode_backend}'
+        self.backend_capabilities = {
+            'internode_backend': self.internode_backend,
+            'supports_internode': self.internode_backend == 'nvshmem',
+            'supports_low_latency': self.internode_backend == 'nvshmem',
+            'supports_fp8_path': True,
+        }
         self.runtime = deep_ep_cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode, explicitly_destroy,
                                           enable_shrink, use_fabric)
 
@@ -160,6 +166,15 @@ class Buffer:
 
         self.runtime.destroy()
         self.runtime = None
+
+    def get_backend_capabilities(self):
+        """
+        Get capability flags of the selected communication backend.
+
+        Returns:
+            capabilities: a dict describing backend support levels.
+        """
+        return dict(self.backend_capabilities)
 
     @staticmethod
     def is_sm90_compiled():
