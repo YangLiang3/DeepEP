@@ -6,9 +6,13 @@
 - Deliver a functional internode dispatch/combine implementation with iSHMEM IBGDA support.
 
 ## Phase 0: Project Setup
-- [ ] Add `doc/` docs and planning artifacts.
-- [ ] Define backend terminology: `cuda_nvshmem`, `sycl_ishmem`.
-- [ ] Document target hardware/software matrix.
+- [x] Add `doc/` docs and planning artifacts.
+- [x] Define backend terminology: `cuda_nvshmem`, `sycl_ishmem`.
+- [x] Document target hardware/software matrix.
+
+Status:
+- Completed on 2026-04-23.
+- Baseline references: `doc/phase0-baseline.md`, `doc/ishmem-integration-design.md`.
 
 ## Phase 1: Backend Abstraction
 - [ ] Introduce backend-neutral internode runtime API (init, alloc, barrier, finalize, rank info).

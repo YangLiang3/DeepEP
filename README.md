@@ -8,6 +8,15 @@ For latency-sensitive inference decoding, DeepEP includes a set of low-latency k
 
 Notice: the implementation in this library may have some slight differences from the [DeepSeek-V3](https://github.com/deepseek-ai/DeepSeek-V3) paper.
 
+## Backend terminology (Phase 0)
+
+To avoid ambiguity in multi-vendor planning, DeepEP uses the following backend terms:
+
+- `cuda_nvshmem`: CUDA device stack with NVSHMEM internode path
+- `sycl_ishmem`: SYCL device stack with iSHMEM internode path (target path for Intel GPU)
+
+See [doc/phase0-baseline.md](doc/phase0-baseline.md) for the Phase 0 target hardware/software matrix.
+
 ## Performance
 
 ### Normal kernels with NVLink and RDMA forwarding
