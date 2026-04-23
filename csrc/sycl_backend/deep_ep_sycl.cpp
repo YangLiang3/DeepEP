@@ -35,23 +35,23 @@ namespace deep_ep {
 // ---------------------------------------------------------------------------
 struct Config {
     int num_sms;
-    int num_max_nvl_chunked_send_tokens;
-    int num_max_nvl_chunked_recv_tokens;
+    int num_max_p2p_chunked_send_tokens;
+    int num_max_p2p_chunked_recv_tokens;
     int num_max_rdma_chunked_send_tokens;
     int num_max_rdma_chunked_recv_tokens;
 
     Config(int num_sms = 20,
-           int num_max_nvl_chunked_send_tokens = 6,
-           int num_max_nvl_chunked_recv_tokens = 256,
+           int num_max_p2p_chunked_send_tokens = 6,
+           int num_max_p2p_chunked_recv_tokens = 256,
            int num_max_rdma_chunked_send_tokens = 6,
            int num_max_rdma_chunked_recv_tokens = 256)
         : num_sms(num_sms),
-          num_max_nvl_chunked_send_tokens(num_max_nvl_chunked_send_tokens),
-          num_max_nvl_chunked_recv_tokens(num_max_nvl_chunked_recv_tokens),
+          num_max_p2p_chunked_send_tokens(num_max_p2p_chunked_send_tokens),
+          num_max_p2p_chunked_recv_tokens(num_max_p2p_chunked_recv_tokens),
           num_max_rdma_chunked_send_tokens(num_max_rdma_chunked_send_tokens),
           num_max_rdma_chunked_recv_tokens(num_max_rdma_chunked_recv_tokens) {}
 
-    int64_t get_nvl_buffer_size_hint(int num_tokens, int hidden, int num_experts, int num_ranks,
+    int64_t get_p2p_buffer_size_hint(int num_tokens, int hidden, int num_experts, int num_ranks,
                                      int num_topk = 1) const {
         // Placeholder — will be implemented with real layout math in later phases
         return static_cast<int64_t>(num_tokens) * hidden * 2 + 1024 * 1024;
@@ -84,13 +84,13 @@ struct EventHandle {
 // Buffer — main communication buffer for SYCL + iSHMEM backend
 // ---------------------------------------------------------------------------
 struct Buffer {
-    EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8, "The number of maximum NVLink peers must be 8");
+    EP_STATIC_ASSERT(NUM_MAX_P2P_PEERS == 8, "The number of maximum P2P peers must be 8");
 
 private:
     // Rank topology (mirrors CUDA backend layout)
-    int rank, rdma_rank, nvl_rank;
-    int num_ranks, num_rdma_ranks, num_nvl_ranks;
-    int64_t num_nvl_bytes;
+    int rank, rdma_rank, p2p_rank;
+    int num_ranks, num_rdma_ranks, num_p2p_ranks;
+    int64_t num_p2p_bytes;
     int64_t num_rdma_bytes;
     bool low_latency_mode;
     bool explicitly_destroy;
@@ -105,12 +105,12 @@ private:
     // SYCL context (non-owning reference to singleton)
     SyclContext* sycl_ctx = nullptr;
 
-    // Intranode NVL buffers (L0 IPC)
-    void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
+    // Intranode P2P buffers (L0 IPC)
+    void* buffer_ptrs[NUM_MAX_P2P_PEERS] = {nullptr};
     void** buffer_ptrs_gpu = nullptr;
-    int* barrier_signal_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
+    int* barrier_signal_ptrs[NUM_MAX_P2P_PEERS] = {nullptr};
     int** barrier_signal_ptrs_gpu = nullptr;
-    L0IpcMemHandle ipc_handles[NUM_MAX_NVL_PEERS];
+    L0IpcMemHandle ipc_handles[NUM_MAX_P2P_PEERS];
     std::unique_ptr<L0MemoryAllocator> mem_allocator;
 
     // Internode RDMA buffer (iSHMEM symmetric heap)
@@ -143,7 +143,7 @@ private:
 public:
     Buffer(int rank,
            int num_ranks,
-           int64_t num_nvl_bytes,
+           int64_t num_p2p_bytes,
            int64_t num_rdma_bytes,
            bool low_latency_mode,
            bool explicitly_destroy,
@@ -151,27 +151,27 @@ public:
            bool use_fabric)
         : rank(rank),
           num_ranks(num_ranks),
-          num_nvl_bytes(num_nvl_bytes),
+          num_p2p_bytes(num_p2p_bytes),
           num_rdma_bytes(num_rdma_bytes),
           low_latency_mode(low_latency_mode),
           explicitly_destroy(explicitly_destroy),
           enable_shrink(enable_shrink) {
         // Compute rank topology
-        rdma_rank = rank / NUM_MAX_NVL_PEERS;
-        nvl_rank = rank % NUM_MAX_NVL_PEERS;
-        num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS);
-        num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
+        rdma_rank = rank / NUM_MAX_P2P_PEERS;
+        p2p_rank = rank % NUM_MAX_P2P_PEERS;
+        num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_P2P_PEERS);
+        num_p2p_ranks = std::min(num_ranks, NUM_MAX_P2P_PEERS);
 
         // Common checks (matching CUDA backend)
-        EP_HOST_ASSERT(num_nvl_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0 and
-                       (num_nvl_bytes <= std::numeric_limits<int>::max() or num_rdma_bytes == 0));
+        EP_HOST_ASSERT(num_p2p_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0 and
+                       (num_p2p_bytes <= std::numeric_limits<int>::max() or num_rdma_bytes == 0));
         EP_HOST_ASSERT(num_rdma_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0 and
                        (low_latency_mode or num_rdma_bytes <= std::numeric_limits<int>::max()));
         EP_HOST_ASSERT(0 <= rank and rank < num_ranks and
-                       (num_ranks <= NUM_MAX_NVL_PEERS * NUM_MAX_RDMA_PEERS or low_latency_mode));
-        EP_HOST_ASSERT(num_ranks < NUM_MAX_NVL_PEERS or num_ranks % NUM_MAX_NVL_PEERS == 0);
+                       (num_ranks <= NUM_MAX_P2P_PEERS * NUM_MAX_RDMA_PEERS or low_latency_mode));
+        EP_HOST_ASSERT(num_ranks < NUM_MAX_P2P_PEERS or num_ranks % NUM_MAX_P2P_PEERS == 0);
         if (num_rdma_bytes > 0)
-            EP_HOST_ASSERT(num_ranks > NUM_MAX_NVL_PEERS or low_latency_mode);
+            EP_HOST_ASSERT(num_ranks > NUM_MAX_P2P_PEERS or low_latency_mode);
 
         // Initialize SYCL context
         sycl_ctx = &SyclContext::get();
@@ -183,25 +183,25 @@ public:
         host_allocator = std::make_unique<L0HostAllocator>(*sycl_ctx);
 
         // Metadata sizes
-        int64_t barrier_signal_bytes = NUM_MAX_NVL_PEERS * sizeof(int);
-        int64_t buffer_ptr_bytes = NUM_MAX_NVL_PEERS * sizeof(void*);
-        int64_t barrier_signal_ptr_bytes = NUM_MAX_NVL_PEERS * sizeof(int*);
+        int64_t barrier_signal_bytes = NUM_MAX_P2P_PEERS * sizeof(int);
+        int64_t buffer_ptr_bytes = NUM_MAX_P2P_PEERS * sizeof(void*);
+        int64_t barrier_signal_ptr_bytes = NUM_MAX_P2P_PEERS * sizeof(int*);
 
-        // Allocate intranode NVL buffers
-        if (num_nvl_bytes > 0) {
-            size_t total_nvl = num_nvl_bytes + barrier_signal_bytes + buffer_ptr_bytes + barrier_signal_ptr_bytes;
-            mem_allocator->malloc(&buffer_ptrs[nvl_rank], total_nvl);
-            mem_allocator->get_ipc_handle(&ipc_handles[nvl_rank], buffer_ptrs[nvl_rank], total_nvl);
+        // Allocate intranode P2P buffers
+        if (num_p2p_bytes > 0) {
+            size_t total_p2p = num_p2p_bytes + barrier_signal_bytes + buffer_ptr_bytes + barrier_signal_ptr_bytes;
+            mem_allocator->malloc(&buffer_ptrs[p2p_rank], total_p2p);
+            mem_allocator->get_ipc_handle(&ipc_handles[p2p_rank], buffer_ptrs[p2p_rank], total_p2p);
 
             buffer_ptrs_gpu = reinterpret_cast<void**>(
-                static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes + barrier_signal_bytes);
-            barrier_signal_ptrs[nvl_rank] = reinterpret_cast<int*>(
-                static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes);
+                static_cast<uint8_t*>(buffer_ptrs[p2p_rank]) + num_p2p_bytes + barrier_signal_bytes);
+            barrier_signal_ptrs[p2p_rank] = reinterpret_cast<int*>(
+                static_cast<uint8_t*>(buffer_ptrs[p2p_rank]) + num_p2p_bytes);
             barrier_signal_ptrs_gpu = reinterpret_cast<int**>(
-                static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes + barrier_signal_bytes + buffer_ptr_bytes);
+                static_cast<uint8_t*>(buffer_ptrs[p2p_rank]) + num_p2p_bytes + barrier_signal_bytes + buffer_ptr_bytes);
 
             // Zero barrier signals
-            mem_allocator->memset_async(barrier_signal_ptrs[nvl_rank], 0, barrier_signal_bytes,
+            mem_allocator->memset_async(barrier_signal_ptrs[p2p_rank], 0, barrier_signal_bytes,
                                         sycl_ctx->comm_queue());
         }
 
@@ -243,19 +243,19 @@ public:
     bool is_available() const { return available; }
 
     bool is_internode_available() const {
-        return is_available() and num_ranks > NUM_MAX_NVL_PEERS;
+        return is_available() and num_ranks > NUM_MAX_P2P_PEERS;
     }
 
     int get_num_rdma_ranks() const { return num_rdma_ranks; }
 
     int get_rdma_rank() const { return rdma_rank; }
 
-    int get_root_rdma_rank(bool global) const { return global ? nvl_rank : 0; }
+    int get_root_rdma_rank(bool global) const { return global ? p2p_rank : 0; }
 
     int get_local_device_id() const { return device_id; }
 
     py::bytearray get_local_ipc_handle() const {
-        const L0IpcMemHandle& handle = ipc_handles[nvl_rank];
+        const L0IpcMemHandle& handle = ipc_handles[p2p_rank];
         return py::bytearray(reinterpret_cast<const char*>(&handle), sizeof(handle));
     }
 
@@ -293,11 +293,11 @@ public:
         EP_HOST_ASSERT(not is_available());
 
         // Sync intranode IPC handles
-        if (num_nvl_bytes > 0) {
+        if (num_p2p_bytes > 0) {
             EP_HOST_ASSERT(static_cast<int>(device_ids.size()) == num_ranks);
             EP_HOST_ASSERT(static_cast<int>(all_gathered_handles.size()) == num_ranks);
 
-            for (int i = 0, offset = rdma_rank * num_nvl_ranks; i < num_nvl_ranks; ++i) {
+            for (int i = 0, offset = rdma_rank * num_p2p_ranks; i < num_p2p_ranks; ++i) {
                 EP_HOST_ASSERT(all_gathered_handles[offset + i].has_value());
                 auto handle_str = std::string(all_gathered_handles[offset + i].value());
                 EP_HOST_ASSERT(handle_str.size() == L0_IPC_HANDLE_SIZE);
@@ -306,7 +306,7 @@ public:
                     std::memcpy(&ipc_handles[i], handle_str.c_str(), L0_IPC_HANDLE_SIZE);
                     mem_allocator->open_ipc_handle(&buffer_ptrs[i], &ipc_handles[i]);
                     barrier_signal_ptrs[i] = reinterpret_cast<int*>(
-                        static_cast<uint8_t*>(buffer_ptrs[i]) + num_nvl_bytes);
+                        static_cast<uint8_t*>(buffer_ptrs[i]) + num_p2p_bytes);
                 } else {
                     EP_HOST_ASSERT(
                         std::memcmp(&ipc_handles[i], handle_str.c_str(), L0_IPC_HANDLE_SIZE) == 0);
@@ -315,9 +315,9 @@ public:
 
             // Copy buffer and barrier signal pointers to device-accessible memory
             sycl_ctx->comm_queue().memcpy(buffer_ptrs_gpu, buffer_ptrs,
-                                           sizeof(void*) * NUM_MAX_NVL_PEERS);
+                                           sizeof(void*) * NUM_MAX_P2P_PEERS);
             sycl_ctx->comm_queue().memcpy(barrier_signal_ptrs_gpu, barrier_signal_ptrs,
-                                           sizeof(int*) * NUM_MAX_NVL_PEERS);
+                                           sizeof(int*) * NUM_MAX_P2P_PEERS);
             sycl_ctx->comm_queue().wait();
         }
 
@@ -373,19 +373,19 @@ public:
         }
 
         // Close intranode IPC handles
-        if (num_nvl_bytes > 0 && is_available()) {
-            for (int i = 0; i < num_nvl_ranks; ++i) {
-                if (i != nvl_rank && buffer_ptrs[i] != nullptr) {
+        if (num_p2p_bytes > 0 && is_available()) {
+            for (int i = 0; i < num_p2p_ranks; ++i) {
+                if (i != p2p_rank && buffer_ptrs[i] != nullptr) {
                     mem_allocator->close_ipc_handle(buffer_ptrs[i]);
                     buffer_ptrs[i] = nullptr;
                 }
             }
         }
 
-        // Free local NVL buffer
-        if (num_nvl_bytes > 0 && buffer_ptrs[nvl_rank] != nullptr) {
-            mem_allocator->free(buffer_ptrs[nvl_rank]);
-            buffer_ptrs[nvl_rank] = nullptr;
+        // Free local P2P buffer
+        if (num_p2p_bytes > 0 && buffer_ptrs[p2p_rank] != nullptr) {
+            mem_allocator->free(buffer_ptrs[p2p_rank]);
+            buffer_ptrs[p2p_rank] = nullptr;
         }
 
         // Free iSHMEM resources
@@ -632,7 +632,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("num_max_nvl_chunked_recv_tokens") = 256,
              py::arg("num_max_rdma_chunked_send_tokens") = 6,
              py::arg("num_max_rdma_chunked_recv_tokens") = 256)
-        .def("get_nvl_buffer_size_hint", &deep_ep::Config::get_nvl_buffer_size_hint)
+        .def("get_nvl_buffer_size_hint", &deep_ep::Config::get_p2p_buffer_size_hint)
         .def("get_rdma_buffer_size_hint", &deep_ep::Config::get_rdma_buffer_size_hint);
     m.def("get_low_latency_rdma_size_hint", &deep_ep::get_low_latency_rdma_size_hint);
 

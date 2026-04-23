@@ -3,7 +3,7 @@
 // SYCL-compatible version of kernels/configs.cuh
 // Constants are shared between CUDA and SYCL backends.
 
-#define NUM_MAX_NVL_PEERS 8
+#define NUM_MAX_P2P_PEERS 8
 #define NUM_MAX_RDMA_PEERS 20
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)
 #define NUM_MAX_LOCAL_EXPERTS 1024
